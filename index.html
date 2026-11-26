@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Visor Flipbook Automático</title>
+  <!-- Librería PageFlip para el efecto realista de libro -->
+  <script src="https://cdn.jsdelivr.net/npm/page-flip/dist/js/page-flip.browser.min.js"></script>
+  <!-- Librería PDF.js para renderizar el PDF sin programas externos -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #1e1e24;
+      color: #ffffff;
+      font-family: system-ui, -apple-system, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    #loader {
+      position: fixed;
+      inset: 0;
+      background: #1e1e24;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      gap: 12px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid rgba(255,255,255,0.1);
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #book-container {
+      width: 90vw;
+      max-width: 1000px;
+      height: 75vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 20px;
+    }
+
+    .page {
+      background-color: #ffffff;
+      box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+      overflow: hidden;
+    }
+
+    .page canvas {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+
+    /* Barra de controles */
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      background: rgba(255, 255, 255, 0.08);
+      padding: 10px 20px;
+      border-radius: 50px;
+      backdrop-filter: blur(8px);
+    }
+
+    button {
+      background: #2b2b36;
+      color: #fff;
+      border: 1px solid rgba(255,255,255,0.15);
+      padding: 8px 16px;
+      border-radius: 20px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s ease;
+    }
+
+    button:hover { background: #3f3f4e; }
+    button.active {
+      background: #0284c7;
+      border-color: #38bdf8;
+    }
+
+    #page-info {
+      font-size: 14px;
+      min-width: 80px;
+      text-align: center;
+      color: #cbd5e1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Pantalla de carga mientras se procesan las hojas -->
+  <div id="loader">
+    <div class="spinner"></div>
+    <p id="loader-text">Cargando páginas del PDF...</p>
+  </div>
+
+  <!-- Contenedor donde se dibujará el libro -->
+  <div id="book-container">
+    <div id="flipbook"></div>
+  </div>
+
+  <!-- Controles inferiores -->
+  <div class="controls">
+    <button id="btn-prev">◀ Anterior</button>
+    <span id="page-info">0 / 0</span>
+    <button id="btn-next">Siguiente ▶</button>
+    <button id="btn-autoplay" class="active">⏸ Pausar Auto (5s)</button>
+  </div>
+
+  <script>
+    // ==========================================
+    // CONFIGURACIÓN PRINCIPAL
+    // ==========================================
+    const PDF_URL = './documento.pdf'; // Nombre de tu archivo PDF
+    const TIEMPO_CAMBIO_MS = 5000;     // 5000 ms = 5 segundos
+    // ==========================================
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const flipbookEl = document.getElementById('flipbook');
+    const loaderEl = document.getElementById('loader');
+    const loaderText = document.getElementById('loader-text');
+    const pageInfo = document.getElementById('page-info');
+    const btnAutoplay = document.getElementById('btn-autoplay');
+
+    let pageFlip = null;
+    let autoplayInterval = null;
+    let isAutoplaying = true;
+
+    async function iniciarFlipbook() {
+      try {
+        const pdf = await pdfjsLib.getDocument(PDF_URL).promise;
+        const totalPaginas = pdf.numPages;
+
+        let anchoPagina = 400;
+        let altoPagina = 560;
+
+        // Renderizar cada página del PDF a un elemento <canvas>
+        for (let num = 1; num <= totalPaginas; num++) {
+          loaderText.textContent = `Procesando página ${num} de ${totalPaginas}...`;
+          const page = await pdf.getPage(num);
+          
+          // Escala 1.5 para buena nitidez de texto
+          const viewport = page.getViewport({ scale: 1.5 });
+          
+          if (num === 1) {
+            anchoPagina = viewport.width;
+            altoPagina = viewport.height;
+          }
+
+          const pageDiv = document.createElement('div');
+          pageDiv.className = 'page';
+
+          const canvas = document.createElement('canvas');
+          const context = canvas.getContext('2d');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+
+          await page.render({ canvasContext: context, viewport: viewport }).promise;
+
+          pageDiv.appendChild(canvas);
+          flipbookEl.appendChild(pageDiv);
+        }
+
+        // Inicializar la física del libro
+        pageFlip = new St.PageFlip(flipbookEl, {
+          width: anchoPagina,
+          height: altoPagina,
+          size: 'stretch',
+          minWidth: 250,
+          maxWidth: 800,
+          minHeight: 350,
+          maxHeight: 1100,
+          maxShadowOpacity: 0.5,
+          showCover: true,
+          mobileScrollSupport: false
+        });
+
+        pageFlip.loadFromHTML(document.querySelectorAll('.page'));
+
+        // Actualizar contador de páginas
+        const actualizarContador = () => {
+          const actual = pageFlip.getCurrentPageIndex() + 1;
+          pageInfo.textContent = `${actual} / ${totalPaginas}`;
+        };
+
+        pageFlip.on('flip', actualizarContador);
+        actualizarContador();
+
+        // Ocultar pantalla de carga e iniciar reproducción automática
+        loaderEl.style.display = 'none';
+        iniciarAutoplay();
+
+      } catch (error) {
+        loaderText.textContent = 'Error al cargar el PDF. Verifica que el archivo exista y estés usando un servidor web (http/https).';
+        console.error(error);
+      }
+    }
+
+    // Función de cambio automático cada 5 segundos
+    function iniciarAutoplay() {
+      detenerAutoplay();
+      isAutoplaying = true;
+      btnAutoplay.textContent = '⏸ Pausar Auto (5s)';
+      btnAutoplay.classList.add('active');
+
+      autoplayInterval = setInterval(() => {
+        if (!pageFlip) return;
+        const paginaActual = pageFlip.getCurrentPageIndex();
+        const total = pageFlip.getPageCount();
+
+        // Si llega al final, vuelve a la portada; si no, pasa a la siguiente
+        if (paginaActual >= total - 1) {
+          pageFlip.flip(0);
+        } else {
+          pageFlip.flipNext();
+        }
+      }, TIEMPO_CAMBIO_MS);
+    }
+
+    function detenerAutoplay() {
+      isAutoplaying = false;
+      clearInterval(autoplayInterval);
+      btnAutoplay.textContent = '▶ Reanudar Auto (5s)';
+      btnAutoplay.classList.remove('active');
+    }
+
+    // Eventos de los botones
+    document.getElementById('btn-prev').addEventListener('click', () => {
+      pageFlip.flipPrev();
+      if (isAutoplaying) iniciarAutoplay(); // Reinicia el contador de 5s al hacer clic manual
+    });
+
+    document.getElementById('btn-next').addEventListener('click', () => {
+      pageFlip.flipNext();
+      if (isAutoplaying) iniciarAutoplay();
+    });
+
+    btnAutoplay.addEventListener('click', () => {
+      if (isAutoplaying) {
+        detenerAutoplay();
+      } else {
+        iniciarAutoplay();
+      }
+    });
+
+    iniciarFlipbook();
+  </script>
+</body>
+</html>
